@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<databases>
+    <database databaseName="finally">
+        <tables>
+            <table tableName="courses" fileName="courses.bin">
+                <structure>
+                    <attribute columnName="course_id" type="INT"/>
+                    <attribute columnName="course_name" type="STRING"/>
+                </structure>
+                <primaryKey>
+                    <pkAttribute>
+                        <pkAttribute>course_id</pkAttribute>
+                    </pkAttribute>
+                </primaryKey>
+                <foreignKeys/>
+                <IndexAttributes>
+                    <IndexAttribute>
+                        <indexName>idx_course_name</indexName>
+                        <tableName>courses</tableName>
+                        <columns/>
+                        <isUnique>false</isUnique>
+                    </IndexAttribute>
+                    <IndexAttribute>
+                        <indexName>idx_course_name</indexName>
+                        <tableName>courses</tableName>
+                        <columns/>
+                        <isUnique>false</isUnique>
+                    </IndexAttribute>
+                </IndexAttributes>
+            </table>
+            <table tableName="enrollments" fileName="enrollments.bin">
+                <structure>
+                    <attribute columnName="student_id" type="INT"/>
+                    <attribute columnName="course_id" type="INT"/>
+                    <attribute columnName="semester" type="STRING"/>
+                </structure>
+                <primaryKey>
+                    <pkAttribute>
+                        <pkAttribute>student_id</pkAttribute>
+                    </pkAttribute>
+                    <pkAttribute>
+                        <pkAttribute>course_id</pkAttribute>
+                    </pkAttribute>
+                </primaryKey>
+                <foreignKeys/>
+                <IndexAttributes>
+                    <IndexAttribute>
+                        <indexName>idx_course_id_unique</indexName>
+                        <tableName>enrollments</tableName>
+                        <columns>
+                            <column>course_id</column>
+                        </columns>
+                        <isUnique>true</isUnique>
+                    </IndexAttribute>
+                </IndexAttributes>
+            </table>
+        </tables>
+    </database>
+</databases>
