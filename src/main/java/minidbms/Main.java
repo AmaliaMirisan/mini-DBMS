@@ -3,14 +3,16 @@ package minidbms;
 import ch.qos.logback.core.joran.spi.XMLUtil;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import domain.*;
 import jdk.jshell.execution.Util;
 import utils.Utils;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import javax.swing.text.Document;
+import java.util.*;
+
+import static utils.Utils.validateValueType;
 
 public class Main {
     private static DBMS myDBMS = new DBMS();
@@ -46,6 +48,12 @@ public class Main {
         }
         else if (command.toLowerCase().startsWith("create index")){
             return createIndex(command);
+        }
+        else if (command.toLowerCase().startsWith("insert")){
+            return handleInsertAsKeyValue(command);
+        }
+        else if (command.toLowerCase().startsWith("delete")){
+            return handleDelete(command);
         }
         else if ("exit".equalsIgnoreCase(command)) {
             return "Exiting...";
@@ -305,7 +313,7 @@ public class Main {
             }
         }
 
-        // delete tabel from MongoDB
+        // delete table from MongoDB
         try {
             mongoClient.getDatabase(currentDatabase.getDatabaseName()).getCollection(tableName).drop();
             System.out.println("MongoDB collection '" + tableName + "' dropped successfully from database '" + currentDatabase.getDatabaseName() + "'!");
@@ -387,11 +395,369 @@ public class Main {
             return "Error processing create index command.";
         }
     }
+    private static String handleInsertAsKeyValue(String command) {
+        try {
+            // Parse the command: "insert into tableName (col1, col2, ...) values (val1, val2, ...)"
+            String[] parts = command.split(" ", 4);
+            if (parts.length < 4 || !parts[1].equalsIgnoreCase("into")) {
+                return "Error: Invalid syntax for insert command.";
+            }
 
+            String tableName = parts[2];
+            String columnsAndValues = parts[3].trim();
 
+            // Extract column names and values part
+            int valuesIndex = columnsAndValues.toLowerCase().indexOf("values");
+            if (valuesIndex == -1) {
+                return "Error: Invalid syntax. Missing 'values' keyword.";
+            }
+
+            String columnsPart = columnsAndValues.substring(0, valuesIndex).trim();
+            String valuesPart = columnsAndValues.substring(valuesIndex + "values".length()).trim();
+
+            // Ensure both parts are wrapped in parentheses
+            if (!columnsPart.startsWith("(") || !columnsPart.endsWith(")")) {
+                return "Error: Invalid syntax. Columns must be enclosed in parentheses.";
+            }
+            if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
+                return "Error: Invalid syntax. Values must be enclosed in parentheses.";
+            }
+
+            // Remove parentheses and split the columns and values
+            String[] columnNames = columnsPart.substring(1, columnsPart.length() - 1).split(",\\s*");
+            String[] values = valuesPart.substring(1, valuesPart.length() - 1).split(",\\s*");
+
+            // Check if a database is selected
+            if (currentDatabase == null) {
+                return "Error: No database selected.";
+            }
+
+            // Verify table existence
+            Table table = currentDatabase.getTableByName(tableName);
+            if (table == null) {
+                return "Error: Table '" + tableName + "' does not exist in the selected database.";
+            }
+
+            // Validate column count and prepare data for insertion
+            if (columnNames.length != values.length) {
+                return "Error: Column count does not match value count.";
+            }
+
+            // Map column names to values
+            Map<String, String> row = new HashMap<>();
+            for (int i = 0; i < columnNames.length; i++) {
+                String columnName = columnNames[i].trim();
+                String value = values[i].trim().replace("'", ""); // Remove quotes from values
+
+                // Verify column existence
+                Column column = table.getColumnByName(columnName);
+                if (column == null) {
+                    return "Error: Column '" + columnName + "' does not exist in table '" + tableName + "'.";
+                }
+
+                row.put(columnName, value);
+            }
+
+            // Generate 'id' based on primary keys
+            StringBuilder idBuilder = new StringBuilder();
+            for (PrimaryKEY pk : table.getPrimaryKeys()) {
+                String pkColumn = pk.getPkAttribute();
+                if (!row.containsKey(pkColumn)) {
+                    return "Error: Primary key column '" + pkColumn + "' is missing in the values.";
+                }
+                if (idBuilder.length() > 0) idBuilder.append("#");
+                idBuilder.append(row.get(pkColumn));
+            }
+            String id = idBuilder.toString();
+
+            // Generate 'value' by concatenating non-primary key values with '#'
+            StringBuilder valueBuilder = new StringBuilder();
+            for (String col : row.keySet()) {
+                boolean isPrimaryKey = table.getPrimaryKeys().stream()
+                        .anyMatch(pk -> pk.getPkAttribute().equals(col));
+                if (!isPrimaryKey) {
+                    if (valueBuilder.length() > 0) valueBuilder.append("#");
+                    valueBuilder.append(row.get(col));
+                }
+            }
+            String value = valueBuilder.toString();
+
+            // Insert into MongoDB
+            insertKeyValueIntoMongoDB(tableName, id, value);
+
+            // Save changes to XML
+            Utils.saveDBMSToXML(myDBMS);
+
+            return "Record inserted successfully into table '" + tableName + "' as key-value pair.";
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error processing insert command.";
+        }
+    }
+
+    // Method to insert into MongoDB with key-value format
+    private static void insertKeyValueIntoMongoDB(String tableName, String id, String value) {
+        MongoCollection<org.bson.Document> collection = mongoClient
+                .getDatabase(currentDatabase.getDatabaseName())
+                .getCollection(tableName);
+
+        org.bson.Document document = new org.bson.Document();
+        document.append("_id", id);
+        document.append("value", value);
+        collection.insertOne(document);
+
+        System.out.println("Inserted key-value record into MongoDB collection '" + tableName + "' with id '" + id + "' and value '" + value + "'.");
+    }
+    private static String handleDelete(String command) {
+        try {
+            // parse the command: "delete from tableName where col1=val1 and col2=val2 ..."
+            String[] parts = command.split(" ", 4);
+            if (parts.length < 4 || !parts[1].equalsIgnoreCase("from") || !parts[3].startsWith("where")) {
+                return "Error: Invalid syntax for delete command.";
+            }
+
+            String tableName = parts[2];
+            String conditionPart = parts[3].substring("where".length()).trim();
+
+            // parse conditions and construct primary key "id"
+            String[] conditions = conditionPart.split("and");
+            Map<String, String> conditionMap = new HashMap<>();
+            for (String cond : conditions) {
+                String[] keyValue = cond.split("=");
+                if (keyValue.length != 2) {
+                    return "Error: Invalid syntax. Expected 'column=value' format in condition.";
+                }
+                String column = keyValue[0].trim();
+                String value = keyValue[1].trim().replace("'", ""); // Elimină ghilimelele
+                conditionMap.put(column, value);
+            }
+
+            // verify if there is a database selected
+            if (currentDatabase == null) {
+                return "Error: No database selected.";
+            }
+
+            // verify if table exists
+            Table table = currentDatabase.getTableByName(tableName);
+            if (table == null) {
+                return "Error: Table '" + tableName + "' does not exist in the selected database.";
+            }
+
+            // builds `id` using values from primary key
+            StringBuilder idBuilder = new StringBuilder();
+            for (PrimaryKEY pk : table.getPrimaryKeys()) {
+                String pkColumn = pk.getPkAttribute();
+                if (!conditionMap.containsKey(pkColumn)) {
+                    return "Error: Missing primary key column '" + pkColumn + "' in conditions.";
+                }
+                if (idBuilder.length() > 0) idBuilder.append("#");
+                idBuilder.append(conditionMap.get(pkColumn));
+            }
+            String id = idBuilder.toString();
+
+            // verify if record exists in MongoDB using "id"
+            if (!recordExistsInMongoDB(tableName, id)) {
+                return "Error: No record found with primary key '" + id + "' in table '" + tableName + "'.";
+            }
+
+            // delete record from MongoDB considering `_id`
+            deleteByIdFromMongoDB(tableName, id);
+
+            // save changes in XML
+            Utils.saveDBMSToXML(myDBMS);
+
+            return "Record deleted successfully from table '" + tableName + "' where primary key is '" + id + "'.";
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error processing delete command.";
+        }
+    }
+    // method for deleting a record from MongoDB using '_id' as a filter
+    private static void deleteByIdFromMongoDB(String tableName, String id) {
+        MongoCollection<org.bson.Document> collection = mongoClient
+                .getDatabase(currentDatabase.getDatabaseName())
+                .getCollection(tableName);
+
+        // create a filter for '_id' and delete document
+        org.bson.Document filter = new org.bson.Document("_id", id);
+        collection.deleteOne(filter);
+
+        System.out.println("Deleted record from MongoDB collection '" + tableName + "' with _id = '" + id + "'.");
+    }
+
+    // method for verifying the existence of the record in MongoDB considering '_id'
+    private static boolean recordExistsInMongoDB(String tableName, String id) {
+        MongoCollection<org.bson.Document> collection = mongoClient
+                .getDatabase(currentDatabase.getDatabaseName())
+                .getCollection(tableName);
+
+        // create a filter using primary key '_id'
+        org.bson.Document filter = new org.bson.Document("_id", id);
+        return collection.countDocuments(filter) > 0;
+    }
 
 
     public static void shutdown() {
         mongoClient.close();
     }
 }
+
+//---------------------------CLASIC INSERT & DELETE---------------------------//
+/*private static String handleInsert(String command) {
+        try {
+            // Parse the command: "insert into tableName (col1, col2, ...) values (val1, val2, ...)"
+            String[] parts = command.split(" ", 4);
+            if (parts.length < 4 || !parts[1].equalsIgnoreCase("into")) {
+                return "Error: Invalid syntax for insert command.";
+            }
+
+            String tableName = parts[2];
+            String columnsAndValues = parts[3].trim();
+
+            // Extract column names and values part
+            int valuesIndex = columnsAndValues.toLowerCase().indexOf("values");
+            if (valuesIndex == -1) {
+                return "Error: Invalid syntax. Missing 'values' keyword.";
+            }
+
+            String columnsPart = columnsAndValues.substring(0, valuesIndex).trim();
+            String valuesPart = columnsAndValues.substring(valuesIndex + "values".length()).trim();
+
+            // Ensure both parts are wrapped in parentheses
+            if (!columnsPart.startsWith("(") || !columnsPart.endsWith(")")) {
+                return "Error: Invalid syntax. Columns must be enclosed in parentheses.";
+            }
+            if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
+                return "Error: Invalid syntax. Values must be enclosed in parentheses.";
+            }
+
+            // Remove parentheses and split the columns and values
+            String[] columnNames = columnsPart.substring(1, columnsPart.length() - 1).split(",\\s*");
+            String[] values = valuesPart.substring(1, valuesPart.length() - 1).split(",\\s*");
+
+            // Check if a database is selected
+            if (currentDatabase == null) {
+                return "Error: No database selected.";
+            }
+
+            // Verify table existence
+            Table table = currentDatabase.getTableByName(tableName);
+            if (table == null) {
+                return "Error: Table '" + tableName + "' does not exist in the selected database.";
+            }
+
+            // Validate column count and prepare data for insertion
+            if (columnNames.length != values.length) {
+                return "Error: Column count does not match value count.";
+            }
+
+            Map<String, String> row = new HashMap<>();
+            for (int i = 0; i < columnNames.length; i++) {
+                String columnName = columnNames[i].trim();
+                String value = values[i].trim().replace("'", ""); // Remove quotes from values
+
+                // Verify column existence
+                Column column = table.getColumnByName(columnName);
+                if (column == null) {
+                    return "Error: Column '" + columnName + "' does not exist in table '" + tableName + "'.";
+                }
+
+                // Validate data type
+                if (!validateValueType(column.getType(), value)) {
+                    return "Error: Invalid data type for column '" + columnName + "'. Expected " + column.getType() + ".";
+                }
+
+                row.put(columnName, value);
+            }
+
+            // Insert row into MongoDB
+            insertIntoMongoDB(tableName, row);
+
+            // Save changes to XML
+            Utils.saveDBMSToXML(myDBMS);
+
+            return "Record inserted successfully into table '" + tableName + "'.";
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error processing insert command.";
+        }
+    }
+
+    private static String handleDelete(String command) {
+        try {
+            // Parse the command: "delete from tableName where columnName=value"
+            String[] parts = command.split(" ", 4);
+            if (parts.length < 4 || !parts[1].equalsIgnoreCase("from") || !parts[3].startsWith("where")) {
+                return "Error: Invalid syntax for delete command.";
+            }
+
+            String tableName = parts[2];
+            String conditionPart = parts[3].substring("where".length()).trim();
+
+            // Extract column name and value for the WHERE condition
+            String[] condition = conditionPart.split("=");
+            if (condition.length != 2) {
+                return "Error: Invalid syntax. Expected 'columnName=value' format for condition.";
+            }
+
+            String columnName = condition[0].trim();
+            String value = condition[1].trim().replace("'", ""); // Remove quotes around the value
+
+            // Check if a database is selected
+            if (currentDatabase == null) {
+                return "Error: No database selected.";
+            }
+
+            // Verify table existence
+            Table table = currentDatabase.getTableByName(tableName);
+            if (table == null) {
+                return "Error: Table '" + tableName + "' does not exist in the selected database.";
+            }
+
+            // Verify that the specified column exists in the table
+            Column column = table.getColumnByName(columnName);
+            if (column == null) {
+                return "Error: Column '" + columnName + "' does not exist in table '" + tableName + "'.";
+            }
+
+            // Delete from MongoDB
+            deleteFromMongoDB(tableName, columnName, value);
+
+            // Save changes to XML
+            Utils.saveDBMSToXML(myDBMS);
+
+            return "Record deleted successfully from table '" + tableName + "' where " + columnName + " = '" + value + "'.";
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error processing delete command.";
+        }
+    }
+    // Method to insert into MongoDB
+    private static void insertIntoMongoDB(String tableName, Map<String, String> row) {
+        MongoCollection<org.bson.Document> collection = mongoClient
+                .getDatabase(currentDatabase.getDatabaseName())
+                .getCollection(tableName);
+
+        org.bson.Document document = new org.bson.Document();
+        row.forEach(document::append);
+        collection.insertOne(document);
+
+        System.out.println("Inserted record into MongoDB collection '" + tableName + "' in database '" + currentDatabase.getDatabaseName() + "'");
+    }
+    // Method to delete from MongoDB
+    private static void deleteFromMongoDB(String tableName, String columnName, String value) {
+        MongoCollection<org.bson.Document> collection = mongoClient
+                .getDatabase(currentDatabase.getDatabaseName())
+                .getCollection(tableName);
+
+        // Create a filter based on the column and value for the delete operation
+        org.bson.Document filter = new org.bson.Document(columnName, value);
+        collection.deleteOne(filter);
+
+        System.out.println("Deleted record from MongoDB collection '" + tableName + "' in database '" + currentDatabase.getDatabaseName() + "' where " + columnName + " = '" + value + "'");
+    }
+*/

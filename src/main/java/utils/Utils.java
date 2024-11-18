@@ -37,4 +37,24 @@ public class Utils {
             e.printStackTrace();
         }
     }
+
+    public static boolean validateValueType(String columnType, String value) {
+        try {
+            switch (columnType.toUpperCase()) {
+                case "INT":
+                    Integer.parseInt(value);
+                    break;
+                case "STRING":
+                    // No specific validation for STRING
+                    break;
+                default:
+                    return false;
+            }
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+
 }

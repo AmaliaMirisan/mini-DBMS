@@ -69,5 +69,16 @@ class Database {
         return null;
     }
 
-
+    public List<Table> getTablesReferencing(String referencedTableName) {
+        List<Table> referencingTables = new ArrayList<>();
+        for (Table table : tables) {
+            for (ForeignKEY fk : table.getForeignKeys()) {
+                if (fk.getRefTable().equalsIgnoreCase(referencedTableName)) {
+                    referencingTables.add(table);
+                    break;
+                }
+            }
+        }
+        return referencingTables;
+    }
 }

@@ -1,0 +1,26 @@
+create table students (student_id INT, name STRING, age INT, primary key (student_id))
+create table courses (course_id INT, course_name STRING, semester STRING, primary key (course_id, semester))
+create table enrollments (enrollment_id INT, student_id INT, course_id INT, semester STRING, grade INT, primary key (enrollment_id), foreign key (student_id) references students(student_id))
+
+insert into students (student_id, name, age) values (1001, 'Alice', 22)
+insert into students (student_id, name, age) values (1002, 'Bob', 23)
+insert into students (student_id, name, age) values (1003, 'Charlie', 21)
+
+insert into courses (course_id, course_name, semester) values ('101', 'Math', 'Fall2023')
+insert into courses (course_id, course_name, semester) values (102, 'Physics', 'Spring2024')
+insert into courses (course_id, course_name, semester) values (103, 'Chemistry', 'Fall2023')
+
+insert into enrollments (enrollment_id, student_id, course_id, semester, grade) values (1, 1001, 101, 'Fall2023', 85)
+insert into enrollments (enrollment_id, student_id, course_id, semester, grade) values (2, 1002, 102, 'Spring2024', 90)
+insert into enrollments (enrollment_id, student_id, course_id, semester, grade) values (3, 1003, 103, 'Fall2023', 88)
+
+
+delete from courses where course_id = 101 and semester = 'Fall2023'
+delete from courses where course_id = 102 and semester = 'Spring2024'
+
+delete from enrollments where enrollment_id = 1
+delete from enrollments where enrollment_id = 2
+
+delete from students where student_id = 1001
+delete from students where student_id = 1002
+
